@@ -63,6 +63,10 @@ export class SocketService {
       defaultQueryTimeoutMs: 60_000,
       // High quality link preview generation
       generateHighQualityLinkPreview: true,
+      // Temporary: Suppress link-preview-js unhandled DNS resolver warning
+      options: {
+        resolveDNSHost: async (url: string) => url,
+      } as unknown as RequestInit,
       // Scoped logger child instance for Baileys internal logs
       logger: logger.child({ module: 'baileys' }),
     });
