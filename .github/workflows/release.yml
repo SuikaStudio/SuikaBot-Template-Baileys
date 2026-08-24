@@ -1,0 +1,66 @@
+name: Release to Github
+
+permissions:
+  contents: write
+  packages: write
+
+on:
+  push:
+    branches:
+      - dev
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Typecheck & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun test
+
+  versioning:
+    name: Versioning
+    needs: validate
+    uses: SuikaStudio/ci-workflows/.github/workflows/versioning.yml@main
+    with:
+      branch: dev
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: Release
+    needs: [validate, versioning]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download changelog artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog
+          path: ${{ runner.temp }}/changelog
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.versioning.outputs.new_tag }}
+          name: ${{ needs.versioning.outputs.new_tag }}
+          body_path: ${{ runner.temp }}/changelog/changelog.txt
+          prerelease: true
