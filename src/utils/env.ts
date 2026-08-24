@@ -1,11 +1,20 @@
+import path from 'path';
+import ffmpegPath from 'ffmpeg-static';
+
 import config from '@/config';
 
 import logger from '@/utils/logger';
 
 /**
- * Validate that required environment variables are set before starting the application.
+ * Validate that required environment variables are set and setup runtime PATH.
  */
 export const validateRequiredEnv = (): void => {
+  // Ensure FFmpeg static binary from node_modules is discoverable via PATH
+  if (ffmpegPath) {
+    const ffmpegDir = path.dirname(ffmpegPath);
+    process.env.PATH = `${ffmpegDir}${path.delimiter}${process.env.PATH || ''}`;
+  }
+
   const missing: string[] = [];
 
   if (!process.env['REDIS_URL']) {
