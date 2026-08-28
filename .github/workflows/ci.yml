@@ -1,26 +1,32 @@
-name: Release to Github
+name: CI
 
 permissions:
   contents: write
   packages: write
 
 on:
-  push:
+  pull_request:
     branches:
       - dev
+      - main
     paths-ignore:
       - '**.md'
       - '.gitignore'
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  push:
+    branches:
+      - dev
+      - main
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
 
 jobs:
   validate:
     name: Typecheck & Test
     runs-on: ubuntu-latest
-
+    concurrency:
+      group: validate-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,16 +46,24 @@ jobs:
   versioning:
     name: Versioning
     needs: validate
+    if: ${{ github.event_name == 'push' && success() }}
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
     uses: SuikaStudio/ci-workflows/.github/workflows/versioning.yml@main
     with:
-      branch: dev
+      branch: ${{ github.ref_name }}
     secrets:
       token: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     name: Release
     needs: [validate, versioning]
+    if: ${{ github.event_name == 'push' && success() }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - name: Download changelog artifact
         uses: actions/download-artifact@v4
@@ -63,4 +77,4 @@ jobs:
           tag_name: ${{ needs.versioning.outputs.new_tag }}
           name: ${{ needs.versioning.outputs.new_tag }}
           body_path: ${{ runner.temp }}/changelog/changelog.txt
-          prerelease: true
+          prerelease: ${{ github.ref_name != 'main' }}
