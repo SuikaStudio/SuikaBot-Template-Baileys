@@ -97,12 +97,20 @@ describe('events/message', () => {
   });
 
   test('processMessage handles valid command message', async () => {
+    (PluginService as any).plugins.set('mocktestcmd', {
+      name: 'mocktestcmd',
+      category: 'general',
+      exec: async (m: any) => {
+        await m.reply('Mock command executed');
+      },
+    });
+
     let responseText = '';
 
     const mockMsg: WAMessage = {
       key: { remoteJid: '123456@s.whatsapp.net', id: 'EV_MSG_1', fromMe: false },
       pushName: 'UserTester',
-      message: { conversation: '.info' },
+      message: { conversation: '.mocktestcmd' },
     };
 
     const mockSock = {
@@ -115,7 +123,7 @@ describe('events/message', () => {
     } as unknown as WASocket;
 
     await processMessage(mockMsg, mockSock);
-    expect(responseText).toContain('Bot Information');
+    expect(responseText).toContain('Mock command executed');
   });
 
   test('processMessage resolves group admins and bot admins correctly', async () => {
