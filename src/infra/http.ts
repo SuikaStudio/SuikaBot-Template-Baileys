@@ -10,13 +10,10 @@ export class HttpService {
     try {
       const res = await fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: this.resolveSignal(options, timeoutMs),
       });
 
-      if (!res.ok) {
-        throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
-      }
-
+      await this.assertResponseOk(res);
       return (await res.json()) as T;
     } catch (err) {
       logger.error({ err, url }, '[HttpService] Failed to fetch JSON');
@@ -31,13 +28,10 @@ export class HttpService {
     try {
       const res = await fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: this.resolveSignal(options, timeoutMs),
       });
 
-      if (!res.ok) {
-        throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
-      }
-
+      await this.assertResponseOk(res);
       const arrayBuffer = await res.arrayBuffer();
       return Buffer.from(arrayBuffer);
     } catch (err) {
@@ -57,12 +51,10 @@ export class HttpService {
     try {
       const res = await fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: this.resolveSignal(options, timeoutMs),
       });
 
-      if (!res.ok) {
-        throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
-      }
+      await this.assertResponseOk(res);
 
       if (!res.body) {
         throw new Error(`HTTP Response body is null for ${url}`);
@@ -81,21 +73,43 @@ export class HttpService {
   static async postJson<T>(url: string, body: unknown, options?: RequestInit, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
     try {
       const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...options?.headers },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
         ...options,
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: {
+          'Content-Type': 'application/json',
+          ...options?.headers,
+        },
+        signal: this.resolveSignal(options, timeoutMs),
       });
 
-      if (!res.ok) {
-        throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
-      }
-
+      await this.assertResponseOk(res);
       return (await res.json()) as T;
     } catch (err) {
       logger.error({ err, url }, '[HttpService] Failed to post JSON');
       throw err;
+    }
+  }
+
+    /**
+   * Compose user-provided AbortSignal with automatic timeout.
+   */
+  private static resolveSignal(options?: RequestInit, timeoutMs = DEFAULT_TIMEOUT_MS): AbortSignal {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    if (!options?.signal) {
+      return timeoutSignal;
+    }
+    return AbortSignal.any([options.signal, timeoutSignal]);
+  }
+
+  /**
+   * Validate HTTP response status and extract error message detail when non-2xx.
+   */
+  private static async assertResponseOk(res: Response): Promise<void> {
+    if (!res.ok) {
+      const errorBody = await res.text().catch(() => '');
+      const detail = errorBody ? ` - ${errorBody.slice(0, 300)}` : '';
+      throw new Error(`HTTP Error ${res.status}: ${res.statusText}${detail}`);
     }
   }
 }
