@@ -45,6 +45,8 @@ interface BasePlugin {
 
   // Dynamic Matcher Support (Regex pattern or predicate function)
   customMatcher?: RegExp | ((text: string, m: SerializedMessage) => boolean);
+  /** If true, disables triggering this plugin via standard prefix (.command), allowing only customMatcher */
+  noPrefix?: boolean;
 
   /**
    * Optional pre-execution hook. Return `false` to cancel execution silently,
