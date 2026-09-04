@@ -147,6 +147,42 @@ describe('core/plugin', () => {
       expect(repliedText).toBe('mock response');
     });
 
+    
+    test('dispatch ignores prefix command when plugin has noPrefix set to true', async () => {
+      let executed = false;
+      const mockSock = TestHelper.createMockSocket();
+      const mockMsg = TestHelper.createMockMessage({
+        body: '.noprefixcmd',
+        command: 'noprefixcmd',
+        prefix: '.',
+      });
+
+      const noPrefixPlugin = {
+        name: 'noprefixcmd',
+        category: 'general',
+        noPrefix: true,
+        customMatcher: /^customonly$/i,
+        exec: async () => {
+          executed = true;
+        },
+      };
+      (PluginService as any).plugins.set('noprefixcmd', noPrefixPlugin);
+
+      const handled = await PluginService.dispatch(mockMsg, mockSock);
+      expect(handled).toBe(false);
+      expect(executed).toBe(false);
+
+      // But triggers when matched via customMatcher
+      const matchedMsg = TestHelper.createMockMessage({
+        body: 'customonly',
+        prefix: '',
+        command: '',
+      });
+      const handledMatcher = await PluginService.dispatch(matchedMsg, mockSock);
+      expect(handledMatcher).toBe(true);
+      expect(executed).toBe(true);
+    });
+
     test('dispatch executes subcommands with aliases and guards', async () => {
       let subExecuted = false;
       const mockSock = TestHelper.createMockSocket();

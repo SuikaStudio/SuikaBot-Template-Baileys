@@ -53,7 +53,7 @@ export class PluginService {
     // 1. Match standard prefix command (.info, .menu, .eval)
     if (m.prefix && m.command) {
       const plugin = this.get(m.command);
-      if (plugin) {
+      if (plugin && !plugin.noPrefix) {
         return await this.executePlugin(plugin, m, sock, m.args ?? []);
       }
     }
