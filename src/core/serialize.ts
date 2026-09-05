@@ -65,7 +65,7 @@ export class SerializeService {
     const { body, prefix, command, args, text, query } = this.parseCommand(rawMsg);
 
     // 4. Mentions & Quoted Context
-    const mentionedJids = (ctxInfo?.mentionedJid ?? []).map((j) => jidNormalizedUser(j));
+    const mentionedJids = [...new Set((ctxInfo?.mentionedJid ?? []).map((j) => jidNormalizedUser(j)))];
     const quoted = this.extractQuoted(message, sock, rawMsg);
     const senderNumber = jidNormalizedUser(senderJid).replace(/[^0-9]/g, '');
     const senderName = message.pushName || senderNumber || 'User';

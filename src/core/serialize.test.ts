@@ -308,6 +308,31 @@ describe('core/serialize', () => {
       expect(botParsed?.quoted?.key.fromMe).toBe(true);
     });
 
+    test('deduplicates mentionedJids array', async () => {
+      const mockSock = TestHelper.createMockSocket();
+      const msg: WAMessage = {
+        key: { remoteJid: '120363000000000000@g.us', id: 'TAG_MSG' },
+        message: {
+          extendedTextMessage: {
+            text: '@628111111111 @628111111111',
+            contextInfo: {
+              mentionedJid: [
+                '628111111111@s.whatsapp.net',
+                '628111111111:2@s.whatsapp.net',
+                '628222222222@s.whatsapp.net',
+              ],
+            },
+          },
+        },
+      };
+
+      const m = await SerializeService.parse(msg, mockSock);
+      expect(m?.mentionedJids).toEqual([
+        '628111111111@s.whatsapp.net',
+        '628222222222@s.whatsapp.net',
+      ]);
+    });
+
     test('resolves group admins and bot admin flags via adminMap', async () => {
       const groupJid = '120363000000000000@g.us';
       const adminUser = '628111111111@s.whatsapp.net';
