@@ -1,5 +1,6 @@
 import makeWASocket, {
   Browsers,
+  proto,
   type CacheStore,
   type WASocket,
 } from '@whiskeysockets/baileys';
@@ -53,9 +54,9 @@ export class SocketService {
       userDevicesCache,
       // Callback to fetch cached group metadata from Redis (prevents API rate-limiting)
       cachedGroupMetadata: async (jid) => MessageStoreService.getCachedGroupMetadata(jid),
-      // Fast startup & minimal memory footprint (bypass past history sync)
+      // Fast startup & minimal memory footprint (bypass heavy FULL chat history while preserving initial LID bootstrap mappings)
       syncFullHistory: false,
-      shouldSyncHistoryMessage: () => false,
+      shouldSyncHistoryMessage: (msg) => msg.syncType !== proto.HistorySync.HistorySyncType.FULL,
       // Do not force 24/7 online presence, show presence dynamically on activity
       markOnlineOnConnect: false,
       // Network stability for cloud & Docker deployments
