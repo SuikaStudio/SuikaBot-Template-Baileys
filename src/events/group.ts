@@ -24,11 +24,19 @@ export const onGroupParticipantsUpdate = async (
   );
 
   if (action === 'remove') {
-    // Evict group cache if the bot itself is removed from the group
-    const botJid = jidNormalizedUser(sock.user?.id ?? '');
-    const isBotRemoved = participantJids.some((pJid) =>
-      areJidsSameUser(pJid, botJid)
-    );
+    // If bot itself was removed/left, evict cache and skip warming metadata
+    const isBotRemoved = participants.some((p) => {
+      const jid = typeof p === 'string' ? p : p.id;
+      const lid = typeof p === 'string' ? undefined : p.lid;
+      const pn = typeof p === 'string' ? undefined : p.phoneNumber;
+
+      return (
+        areJidsSameUser(jid, sock.user?.id) ||
+        areJidsSameUser(jid, sock.user?.lid) ||
+        (lid ? areJidsSameUser(lid, sock.user?.lid) : false) ||
+        (pn ? areJidsSameUser(pn, sock.user?.id) : false)
+      );
+    });
 
     if (isBotRemoved) {
       await MessageStoreService.evictGroupCache(groupJid);
@@ -48,8 +56,13 @@ export const onGroupsUpdate = async (
   for (const group of groups) {
     if (!group.id) continue;
 
-    // Warm up group cache on group update
     const groupJid = jidNormalizedUser(group.id);
+
+    // Only warm cache if group is already tracked in cache.
+    // If bot was removed or group was evicted, skip blind network fetch to prevent 403 Forbidden.
+    const cached = await MessageStoreService.getCachedGroupMetadata(groupJid);
+    if (!cached) continue;
+
     await MessageStoreService.warmGroupCache(sock, groupJid);
 
     logger.debug({ groupJid }, '[group] Group metadata updated');
