@@ -3,6 +3,7 @@ import {
   initAuthCreds,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
+  proto,
   type AuthenticationState,
   type SignalDataTypeMap,
 } from '@whiskeysockets/baileys';
@@ -79,7 +80,14 @@ export class AuthStoreService {
       if (value) {
         const id = ids[index];
         if (id !== undefined) {
-          data[id] = JSON.parse(value, BufferJSON.reviver) as SignalDataTypeMap[T];
+          const parsed = JSON.parse(value, BufferJSON.reviver) as unknown;
+          const item =
+            type === 'app-state-sync-key' && parsed && typeof parsed === 'object'
+              ? (proto.Message.AppStateSyncKeyData.fromObject(
+                  parsed as Record<string, unknown>
+                ) as unknown as SignalDataTypeMap[T])
+              : (parsed as SignalDataTypeMap[T]);
+          data[id] = item;
         }
       }
     });
@@ -110,10 +118,12 @@ export class AuthStoreService {
 
   private static async clearKeys(): Promise<void> {
     const pattern = `${config.redis.prefix}auth:keys:*`;
+
     const matchingKeys = await RedisService.scan(pattern);
     if (matchingKeys.length > 0) {
       await RedisService.del(matchingKeys);
     }
+
     logger.info('[AuthStoreService] Cleared all Signal keys');
   }
 }

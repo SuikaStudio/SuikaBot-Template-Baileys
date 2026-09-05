@@ -6,6 +6,7 @@ import { onMessagesUpsert, processMessage } from '@/events/message';
 import { PluginService } from '@/core/plugin';
 
 import { MessageQueueService } from '@/services/messageQueue';
+import { MessageStoreService } from '@/services/messageStore';
 
 import { TestHelper } from '@/utils/testing';
 
@@ -74,6 +75,31 @@ describe('events/message', () => {
     expect(enqueueSpy).toHaveBeenCalledTimes(1);
 
     enqueueSpy.mockRestore();
+  });
+
+  test('onMessagesUpsert persists sync messages to MessageStoreService regardless of type', async () => {
+    const mockSock = {} as WASocket;
+
+    // History sync / offline messages ('append') should still be stored in Redis for retries & quoted context
+    await onMessagesUpsert(
+      {
+        messages: [
+          {
+            key: { remoteJid: '123@s.whatsapp.net', id: 'M_APPEND_STORE', fromMe: false },
+            message: { conversation: 'synced history message' },
+          },
+        ],
+        type: 'append',
+      },
+      mockSock
+    );
+
+    const stored = await MessageStoreService.getMessage({
+      remoteJid: '123@s.whatsapp.net',
+      id: 'M_APPEND_STORE',
+    });
+    expect(stored).toBeDefined();
+    expect(stored?.message?.conversation).toBe('synced history message');
   });
 
   test('onMessagesUpsert intercepts protocolMessage revoke and cancels queue', async () => {

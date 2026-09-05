@@ -93,9 +93,6 @@ export const onMessagesUpsert = async (
   { messages, type }: { messages: WAMessage[]; type: string },
   _sock: WASocket
 ): Promise<void> => {
-  // Only process live, real-time messages ('notify') and ignore offline/history sync backlog ('append')
-  if (type !== 'notify') return;
-
   for (const message of messages) {
     // Ignore empty packets, missing keys, or status/broadcast stories
     if (!shouldProcessMessage(message)) continue;
@@ -105,6 +102,9 @@ export const onMessagesUpsert = async (
 
     // Store in Redis for retry delivery, poll vote decryption, and quoted media lookups
     await MessageStoreService.saveMessage(message);
+
+    // Only process live, real-time messages ('notify') and ignore offline/history sync backlog ('append')
+    if (type !== 'notify') continue;
 
     // Extract message text across all formats (conversation, captions, ephemeral, viewOnce)
     const body = SerializeService.extractBody(message);
@@ -126,4 +126,3 @@ export const onMessagesUpdate = async (
 ): Promise<void> => {
   // Hook for message status updates, edits, or anti-delete logging
 };
-
