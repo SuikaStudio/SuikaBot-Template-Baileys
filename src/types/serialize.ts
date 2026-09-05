@@ -58,70 +58,43 @@ export interface SerializedMessage {
   isMedia: boolean;
   isQuotedMedia: boolean;
   mediaType: string | null; // e.g. 'imageMessage', 'videoMessage', etc.
-  /** MIME type of media (e.g. 'image/jpeg', 'application/pdf'), if present */
   mimetype: string | null;
-  /** Original file name of document, if present */
   fileName: string | null;
 
-  // Quoted message (if any)
+  // Text & routing context
+  body: string;             // Normalized message body text
+  prefix: string;           // Matched prefix (e.g. '.') or empty string
+  command: string;          // Extracted command name without prefix
+  args: string[];           // Array of space-separated arguments
+  text: string;             // Everything after the command name as a string
+  query: string;            // Trimmed alias of `text`
+  mentionedJids: string[];  // Normalized mentioned user JIDs
+
+  // Quoted context
   quoted: QuotedMessage | null;
 
-  // Mentioned users (JID list, normalized)
-  mentionedJids: string[];
-
-  // ── Command & Argument Parsing ────────────────────────────────────────────────
-  body: string;             // Full raw text body of the message
-  prefix: string;           // The prefix used (e.g. '.')
-  command: string;          // The command name (e.g. 'ping' from '.ping hello')
-  text: string;             // Everything after the command (e.g. 'hello world')
-  query: string;            // Alias for text, trimmed
-  args: string[];           // text split by whitespace (e.g. ['hello', 'world'])
-
-  /** Split text by a custom delimiter. Default splits by whitespace. */
-  split: (delimiter?: string | RegExp) => string[];
-
-  // ── Built-in Action Primitives ────────────────────────────────────────────────
-  /** Reply with text or rich media content (image, video, etc.), quoted by default */
-  reply: (
-    content: string | AnyMessageContent,
-    options?: MiscMessageGenerationOptions
-  ) => Promise<WAMessage | undefined>;
-
-  /** Send an emoji reaction to this message */
+  // ── Bound Action Primitives ──────────────────────────────────────────────────
+  /** Reply to this message in current chat */
+  reply: (content: string | AnyMessageContent, options?: MiscMessageGenerationOptions) => Promise<WAMessage | undefined>;
+  /** React with an emoji to this message */
   react: (emoji: string) => Promise<WAMessage | undefined>;
-
-  /**
-   * Edit a previously sent bot message.
-   * @param keyToEdit - The message key of the bot message to edit
-   * @param newText   - The new text content
-   */
+  /** Edit a previously sent bot message */
   edit: (keyToEdit: proto.IMessageKey, newText: string) => Promise<WAMessage | undefined>;
-
-  /** Delete a message (defaults to this message's key) */
+  /** Delete this message (works on bot's own messages or in groups if bot is admin) */
   delete: (keyToDelete?: proto.IMessageKey) => Promise<WAMessage | undefined>;
-
-  /** Broadcast "typing..." presence indicator to this chat */
+  /** Show typing presence indicator in current chat */
   showTyping: () => Promise<void>;
-
-  /** Broadcast "recording audio..." presence indicator to this chat */
+  /** Show recording presence indicator in current chat */
   showRecording: () => Promise<void>;
-
-  /**
-   * Reply with a media message (image, video, audio, sticker, document).
-   * @param type    - Media type string
-   * @param content - Buffer or URL string
-   * @param caption - Optional caption text
-   */
+  /** Send media (image, video, document, audio, sticker, ptv) to current chat */
   replyMedia: (
     type: 'image' | 'video' | 'audio' | 'sticker' | 'document' | 'ptv',
     content: Buffer | string,
     caption?: string,
     options?: { mimetype?: string; fileName?: string; ptt?: boolean }
   ) => Promise<WAMessage | undefined>;
-
-  /**
-   * Download media from this message.
-   * Uses reuploadRequest for expired media URLs (404 recovery).
-   */
+  /** Download media buffer attached directly to this message */
   downloadMedia: () => Promise<Buffer>;
+  /** Helper to split message text cleanly */
+  split: (delimiter?: string | RegExp) => string[];
 }

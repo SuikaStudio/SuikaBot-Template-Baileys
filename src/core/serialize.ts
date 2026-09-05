@@ -137,7 +137,11 @@ export class SerializeService {
       options?: MiscMessageGenerationOptions
     ): Promise<WAMessage | undefined> => {
       const msgContent: AnyMessageContent = typeof content === 'string' ? { text: content } : content;
-      return await sock.sendMessage(chatJid, msgContent, { quoted: message, ...options });
+      const sent = await sock.sendMessage(chatJid, msgContent, { quoted: message, ...options });
+      if (sent) {
+        await MessageStoreService.saveMessage(sent);
+      }
+      return sent;
     };
 
     const react = async (emoji: string): Promise<WAMessage | undefined> => {
@@ -145,7 +149,11 @@ export class SerializeService {
     };
 
     const edit = async (keyToEdit: proto.IMessageKey, newText: string): Promise<WAMessage | undefined> => {
-      return await sock.sendMessage(chatJid, { text: newText, edit: keyToEdit });
+      const sent = await sock.sendMessage(chatJid, { text: newText, edit: keyToEdit });
+      if (sent) {
+        await MessageStoreService.saveMessage(sent);
+      }
+      return sent;
     };
 
     const deleteMsg = async (keyToDelete?: proto.IMessageKey): Promise<WAMessage | undefined> => {
@@ -204,7 +212,11 @@ export class SerializeService {
           break;
       }
 
-      return await sock.sendMessage(chatJid, msgContent, { quoted: message });
+      const sent = await sock.sendMessage(chatJid, msgContent, { quoted: message });
+      if (sent) {
+        await MessageStoreService.saveMessage(sent);
+      }
+      return sent;
     };
 
     const downloadMedia = async (): Promise<Buffer> => {

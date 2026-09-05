@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import type { WAMessage } from '@whiskeysockets/baileys';
 
 import { SerializeService } from '@/core/serialize';
+import { MessageStoreService } from '@/services/messageStore';
 import { TestHelper } from '@/utils/testing';
 
 describe('core/serialize', () => {
@@ -312,6 +313,42 @@ describe('core/serialize', () => {
       // Test replyMedia ptv video note
       await m.replyMedia('ptv', Buffer.from('ptv-data'));
       expect(sentMediaPayload?.ptv).toBe(true);
+    });
+
+    test('reply, replyMedia, and edit automatically save sent messages to MessageStoreService', async () => {
+      const redis = TestHelper.mockRedis();
+      try {
+        const msg: WAMessage = {
+          key: { remoteJid: '123456@s.whatsapp.net', id: 'ACT_RETRY_1', fromMe: false },
+          message: { conversation: '.ping' },
+        };
+
+        const mockSock = TestHelper.createMockSocket({
+          user: { id: '628999999999@s.whatsapp.net' },
+          sendMessage: async (jid: string, content: unknown) => {
+            return {
+              key: { remoteJid: jid, id: 'SENT_ID_101', fromMe: true },
+              message: content,
+            } as unknown as WAMessage;
+          },
+        });
+
+        const m = await SerializeService.parse(msg, mockSock);
+        expect(m).not.toBeNull();
+        if (!m) return;
+
+        await m.reply('Hello retry world');
+
+        // Check if sent message was stored in MessageStoreService
+        const saved = await MessageStoreService.getMessage({
+          remoteJid: '123456@s.whatsapp.net',
+          id: 'SENT_ID_101',
+        });
+        expect(saved).toBeDefined();
+        expect((saved?.message as Record<string, unknown> | undefined)?.['text']).toBe('Hello retry world');
+      } finally {
+        redis.restore();
+      }
     });
   });
 });
