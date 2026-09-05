@@ -59,14 +59,10 @@ export class SerializeService {
     const isAdmin = isGroup ? this.resolveIsAdmin(adminMap, senderJid, senderLid) : false;
     const isBotAdmin = isGroup ? this.resolveIsAdmin(adminMap, botJid, botLid) : false;
 
-    // 3. Command & Arguments Parsing
-    const body = this.extractBodyFromUnwrapped(rawMsg);
-    const hasPrefix = body.startsWith(config.bot.prefix);
-    const cleanBody = hasPrefix ? body.slice(config.bot.prefix.length).trim() : body.trim();
-    const parts = cleanBody.split(/\s+/);
-    const command = (parts[0] ?? '').toLowerCase();
-    const args = parts.slice(1);
-    const text = args.join(' ');
+    // 3. Command Tokenization & Arguments Parsing
+    // Extract text body, enforce strict prefix rules (e.g. '.s' valid, '. s' rejected),
+    // and extract lowercase command names alongside positional arguments.
+    const { body, prefix, command, args, text, query } = this.parseCommand(rawMsg);
 
     // 4. Mentions & Quoted Context
     const mentionedJids = (ctxInfo?.mentionedJid ?? []).map((j) => jidNormalizedUser(j));
@@ -91,11 +87,11 @@ export class SerializeService {
         : Number(message.messageTimestamp?.low ?? Date.now() / 1000),
       fromBot,
       body,
-      prefix: hasPrefix ? config.bot.prefix : '',
+      prefix,
       command,
       args,
       text,
-      query: text.trim(),
+      query,
       isGroup,
       isAdmin,
       isBotAdmin,
@@ -281,7 +277,7 @@ export class SerializeService {
   /**
    * Unwrap Ephemeral, ViewOnce, and Document wrapper messages to inner content.
    */
-  private static unwrapMessage(msg?: proto.IMessage | null): proto.IMessage | null | undefined {
+  static unwrapMessage(msg?: proto.IMessage | null): proto.IMessage | null | undefined {
     if (!msg) return msg;
     if (msg.ephemeralMessage) return this.unwrapMessage(msg.ephemeralMessage.message);
     if (msg.viewOnceMessage) return this.unwrapMessage(msg.viewOnceMessage.message);
@@ -445,5 +441,37 @@ export class SerializeService {
       }
     }
     return false;
+  }
+
+  /**
+   * Parse command name, prefix, arguments, and text payload from unwrapped message.
+   */
+  private static parseCommand(rawMsg: proto.IMessage | null | undefined): {
+    body: string;
+    prefix: string;
+    command: string;
+    args: string[];
+    text: string;
+    query: string;
+  } {
+    const body = this.extractBodyFromUnwrapped(rawMsg);
+    const afterPrefix = body.startsWith(config.bot.prefix) ? body.slice(config.bot.prefix.length) : '';
+    const hasPrefix = Boolean(afterPrefix && !afterPrefix.startsWith(' '));
+
+    const cleanBody = hasPrefix ? afterPrefix.trim() : body.trim();
+    const parts = cleanBody ? cleanBody.split(/\s+/) : [];
+    const command = hasPrefix ? (parts[0] ?? '').toLowerCase() : '';
+    const args = hasPrefix ? parts.slice(1) : parts;
+    const text = args.join(' ');
+    const query = text.trim();
+
+    return {
+      body,
+      prefix: hasPrefix ? config.bot.prefix : '',
+      command,
+      args,
+      text,
+      query,
+    };
   }
 }

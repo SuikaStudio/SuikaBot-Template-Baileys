@@ -144,6 +144,55 @@ describe('core/serialize', () => {
       expect(m.fileName).toBeNull();
     });
 
+    test('enforces strict prefix: accepts .s and .S, rejects . s with space', async () => {
+      const mockSock = TestHelper.createMockSocket();
+
+      // Case 1: .s (valid)
+      const validMsg = await SerializeService.parse(
+        {
+          key: { remoteJid: '123@s.whatsapp.net', id: 'M_S' },
+          message: { conversation: '.s nowm' },
+        },
+        mockSock
+      );
+      expect(validMsg?.prefix).toBe('.');
+      expect(validMsg?.command).toBe('s');
+      expect(validMsg?.args).toEqual(['nowm']);
+
+      // Case 2: .S (valid, case-insensitive)
+      const upperMsg = await SerializeService.parse(
+        {
+          key: { remoteJid: '123@s.whatsapp.net', id: 'M_UPPER' },
+          message: { conversation: '.Stiker' },
+        },
+        mockSock
+      );
+      expect(upperMsg?.prefix).toBe('.');
+      expect(upperMsg?.command).toBe('stiker');
+
+      // Case 3: . s (rejected: space immediately following prefix)
+      const spacedMsg = await SerializeService.parse(
+        {
+          key: { remoteJid: '123@s.whatsapp.net', id: 'M_SPACE' },
+          message: { conversation: '. s' },
+        },
+        mockSock
+      );
+      expect(spacedMsg?.prefix).toBe('');
+      expect(spacedMsg?.command).toBe('');
+
+      // Case 4: just a dot "." (rejected)
+      const dotMsg = await SerializeService.parse(
+        {
+          key: { remoteJid: '123@s.whatsapp.net', id: 'M_DOT' },
+          message: { conversation: '.' },
+        },
+        mockSock
+      );
+      expect(dotMsg?.prefix).toBe('');
+      expect(dotMsg?.command).toBe('');
+    });
+
     test('extracts mimetype and fileName for media messages including ptvMessage', async () => {
       const docMsg: WAMessage = {
         key: { remoteJid: '1234567890@s.whatsapp.net', id: 'DOC100', fromMe: false },
