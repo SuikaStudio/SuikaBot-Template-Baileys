@@ -2,6 +2,8 @@ import {
   getContentType,
   isJidGroup,
   jidNormalizedUser,
+  jidDecode,
+  isLidUser,
   areJidsSameUser,
   downloadMediaMessage,
   type WAMessage,
@@ -45,37 +47,44 @@ export class SerializeService {
   ): Promise<SerializedMessage | null> {
     if (!message.key.remoteJid || !message.message) return null;
 
-    // 1. Unwrap Message & Extract Media Metadata
+    // 1. Message Unwrapping & Media Metadata Extraction
+    // Unwrap nested protobuf containers (ephemeral, view-once, document) to access the real payload,
+    // then extract contentType, MIME type, and optional contextInfo in a single pass.
     const rawMsg = this.unwrapMessage(message.message);
-    const type = getContentType(rawMsg ?? undefined) ?? '';
-    const { mimetype, fileName } = this.extractMediaMeta(rawMsg);
-    const ctxInfo = this.extractContextInfo(rawMsg);
+    const mediaType = getContentType(rawMsg ?? undefined) ?? null;
+    const { mimetype, fileName } = this.extractMediaMeta(rawMsg, mediaType ?? undefined);
+    const ctxInfo = this.extractContextInfo(rawMsg, mediaType ?? undefined);
 
-    // 2. Identity & Permission Resolution (PN & LID)
+    // 2. Identity Resolution & Group Access Permissions
+    // Extract normalized chat and sender identifiers (supporting both Phone Number and LID formats),
+    // then resolve group admin privileges for both the sender and the bot.
     const { chatJid, senderJid, senderLid, fromBot } = this.resolveSender(message.key, sock);
     const isGroup = Boolean(isJidGroup(chatJid));
-    const botJid = jidNormalizedUser(sock.user?.id ?? '');
-    const botLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : null;
-    const isAdmin = isGroup ? this.resolveIsAdmin(adminMap, senderJid, senderLid) : false;
-    const isBotAdmin = isGroup ? this.resolveIsAdmin(adminMap, botJid, botLid) : false;
+    const { isAdmin, isBotAdmin } = this.resolvePermissions(adminMap, isGroup, senderJid, senderLid, sock);
+    const senderName = message.pushName || jidDecode(senderJid)?.user || 'User';
 
-    // 3. Command & Arguments Parsing
-    const body = this.extractBodyFromUnwrapped(rawMsg);
-    const hasPrefix = body.startsWith(config.bot.prefix);
-    const cleanBody = hasPrefix ? body.slice(config.bot.prefix.length).trim() : body.trim();
-    const parts = cleanBody.split(/\s+/);
-    const command = (parts[0] ?? '').toLowerCase();
-    const args = parts.slice(1);
-    const text = args.join(' ');
+    // 3. Command Tokenization & Arguments Parsing
+    // Extract text body, enforce strict prefix rules (e.g. '.s' valid, '. s' rejected),
+    // and extract lowercase command names alongside positional arguments.
+    const { body, prefix, command, args, text, query } = this.parseCommand(rawMsg);
 
-    // 4. Mentions & Quoted Context
-    const mentionedJids = (ctxInfo?.mentionedJid ?? []).map((j) => jidNormalizedUser(j));
+    // 4. Mentions & Quoted Context Resolution
+    // Deduplicate mentioned user JIDs and resolve any referenced/quoted parent message,
+    // including its media, author identity, and bound action primitives.
+    const mentionedJids = [...new Set((ctxInfo?.mentionedJid ?? []).map((j) => jidNormalizedUser(j)))];
     const quoted = this.extractQuoted(message, sock, rawMsg);
-    const senderNumber = jidNormalizedUser(senderJid).replace(/[^0-9]/g, '');
-    const senderName = message.pushName || senderNumber || 'User';
 
-    // 5. Action Primitives
+    // 5. Bound Action Primitives
+    // Construct pre-bound action helpers (reply, react, edit, delete, typing, downloadMedia)
+    // pinned to this message and chat context with automatic persistence.
     const actions = this.createActions(message, sock, chatJid, rawMsg, text);
+
+    // 6. Final Serialized Payload Assembly
+    // Assemble all normalized identities, parsed command data, metadata, and bound actions
+    // into an immutable, unified SerializedMessage contract.
+    const timestamp = typeof message.messageTimestamp === 'number'
+      ? message.messageTimestamp
+      : Number(message.messageTimestamp?.low ?? Date.now() / 1000);
 
     return {
       raw: message,
@@ -86,22 +95,20 @@ export class SerializeService {
       senderJid,
       senderLid,
       senderName,
-      timestamp: typeof message.messageTimestamp === 'number'
-        ? message.messageTimestamp
-        : Number(message.messageTimestamp?.low ?? Date.now() / 1000),
+      timestamp,
       fromBot,
       body,
-      prefix: hasPrefix ? config.bot.prefix : '',
+      prefix,
       command,
       args,
       text,
-      query: text.trim(),
+      query,
       isGroup,
       isAdmin,
       isBotAdmin,
-      isMedia: MEDIA_TYPES.has(type),
+      isMedia: Boolean(mediaType && MEDIA_TYPES.has(mediaType)),
       isQuotedMedia: Boolean(quoted?.isMedia),
-      mediaType: type || null,
+      mediaType,
       mimetype,
       fileName,
       quoted,
@@ -116,6 +123,29 @@ export class SerializeService {
   static extractBody(message: WAMessage): string {
     const msg = this.unwrapMessage(message.message);
     return this.extractBodyFromUnwrapped(msg);
+  }
+
+  /**
+   * Unwrap Ephemeral, ViewOnce, and Document wrapper messages to inner content.
+   * Uses an iterative O(1) auxiliary space loop to prevent recursion stack overhead.
+   */
+  static unwrapMessage(msg?: proto.IMessage | null): proto.IMessage | null | undefined {
+    while (msg) {
+      if (msg.ephemeralMessage) {
+        msg = msg.ephemeralMessage.message;
+      } else if (msg.viewOnceMessage) {
+        msg = msg.viewOnceMessage.message;
+      } else if (msg.viewOnceMessageV2) {
+        msg = msg.viewOnceMessageV2.message;
+      } else if (msg.viewOnceMessageV2Extension) {
+        msg = msg.viewOnceMessageV2Extension.message;
+      } else if (msg.documentWithCaptionMessage) {
+        msg = msg.documentWithCaptionMessage.message;
+      } else {
+        break;
+      }
+    }
+    return msg;
   }
 
   // ============================================================================
@@ -279,28 +309,18 @@ export class SerializeService {
   // ============================================================================
 
   /**
-   * Unwrap Ephemeral, ViewOnce, and Document wrapper messages to inner content.
-   */
-  private static unwrapMessage(msg?: proto.IMessage | null): proto.IMessage | null | undefined {
-    if (!msg) return msg;
-    if (msg.ephemeralMessage) return this.unwrapMessage(msg.ephemeralMessage.message);
-    if (msg.viewOnceMessage) return this.unwrapMessage(msg.viewOnceMessage.message);
-    if (msg.viewOnceMessageV2) return this.unwrapMessage(msg.viewOnceMessageV2.message);
-    if (msg.viewOnceMessageV2Extension) return this.unwrapMessage(msg.viewOnceMessageV2Extension.message);
-    if (msg.documentWithCaptionMessage) return this.unwrapMessage(msg.documentWithCaptionMessage.message);
-    return msg;
-  }
-
-  /**
    * Safely extract media MIME type and filename from unwrapped message structure.
    */
-  private static extractMediaMeta(msg?: proto.IMessage | null): { mimetype: string | null; fileName: string | null } {
+  private static extractMediaMeta(
+    msg?: proto.IMessage | null,
+    type?: string
+  ): { mimetype: string | null; fileName: string | null } {
     if (!msg) return { mimetype: null, fileName: null };
 
-    const type = getContentType(msg);
-    if (!type || !MEDIA_TYPES.has(type)) return { mimetype: null, fileName: null };
+    const mediaType = type ?? getContentType(msg);
+    if (!mediaType || !MEDIA_TYPES.has(mediaType)) return { mimetype: null, fileName: null };
 
-    const inner = (msg as unknown as Record<string, { mimetype?: string; fileName?: string }>)[type];
+    const inner = (msg as unknown as Record<string, { mimetype?: string; fileName?: string }>)[mediaType];
     return {
       mimetype: typeof inner?.mimetype === 'string' ? inner.mimetype : null,
       fileName: typeof inner?.fileName === 'string' ? inner.fileName : null,
@@ -311,14 +331,15 @@ export class SerializeService {
    * Safely extract ContextInfo from unwrapped message structure.
    */
   private static extractContextInfo(
-    msg?: proto.IMessage | null
+    msg?: proto.IMessage | null,
+    type?: string
   ): (proto.IContextInfo & { participantAlt?: string; remoteJidAlt?: string }) | undefined {
     if (!msg) return undefined;
 
-    const type = getContentType(msg);
-    if (!type) return undefined;
+    const messageType = type ?? getContentType(msg);
+    if (!messageType) return undefined;
 
-    const inner = (msg as unknown as Record<string, { contextInfo?: proto.IContextInfo }>)[type];
+    const inner = (msg as unknown as Record<string, { contextInfo?: proto.IContextInfo }>)[messageType];
     return inner?.contextInfo ?? undefined;
   }
 
@@ -355,6 +376,18 @@ export class SerializeService {
   }
 
   /**
+   * Helper to find and normalize first valid LID from a list of candidate strings.
+   */
+  private static findLid(...candidates: (string | null | undefined)[]): string | null {
+    for (const j of candidates) {
+      if (typeof j === 'string' && isLidUser(j)) {
+        return jidNormalizedUser(j);
+      }
+    }
+    return null;
+  }
+
+  /**
    * Extract quoted message context if present, including quoted action primitives.
    */
   private static extractQuoted(
@@ -362,26 +395,30 @@ export class SerializeService {
     sock: WASocket,
     rawMsg?: proto.IMessage | null
   ): QuotedMessage | null {
-    const unwrapMsg = rawMsg !== undefined ? rawMsg : this.unwrapMessage(message.message);
+    const unwrapMsg = rawMsg ?? this.unwrapMessage(message.message);
     const ctx = this.extractContextInfo(unwrapMsg);
     if (!ctx?.quotedMessage) return null;
 
     const chatJid = jidNormalizedUser(message.key.remoteJid!);
     const rawSender = ctx.participantAlt || ctx.participant || ctx.remoteJidAlt || message.key.remoteJid!;
     const senderJid = jidNormalizedUser(rawSender);
-    const senderLid =
-      [ctx.participant, ctx.participantAlt, ctx.remoteJid, ctx.remoteJidAlt, message.key.remoteJid].find(
-        (j) => typeof j === 'string' && j.endsWith('@lid')
-      ) ?? null;
+    const senderLid = this.findLid(ctx.participant, ctx.participantAlt, ctx.remoteJid, ctx.remoteJidAlt, message.key.remoteJid);
 
     const quotedMsg = this.unwrapMessage(ctx.quotedMessage as proto.IMessage) ?? (ctx.quotedMessage as proto.IMessage);
     const mediaType = getContentType(quotedMsg) ?? null;
-    const { mimetype, fileName } = this.extractMediaMeta(quotedMsg);
+    const { mimetype, fileName } = this.extractMediaMeta(quotedMsg, mediaType ?? undefined);
     const text = this.extractBodyFromUnwrapped(quotedMsg);
+
+    const botJid = jidNormalizedUser(sock.user?.id ?? '');
+    const botLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : null;
+    const fromMe = Boolean(
+      (botJid && areJidsSameUser(senderJid, botJid)) ||
+      (botLid && senderLid && areJidsSameUser(senderLid, botLid))
+    );
 
     const quotedKey: proto.IMessageKey = {
       remoteJid: message.key.remoteJid!,
-      fromMe: Boolean(senderJid && areJidsSameUser(senderJid, message.key.participant ?? '')),
+      fromMe,
       id: ctx.stanzaId,
       participant: ctx.participant,
     };
@@ -420,11 +457,32 @@ export class SerializeService {
     const senderJid = fromBot ? jidNormalizedUser(sock.user?.id ?? '') : jidNormalizedUser(rawSender);
     const senderLid = fromBot
       ? (sock.user?.lid ? jidNormalizedUser(sock.user.lid) : null)
-      : [key.participant, key.participantAlt, key.remoteJid, key.remoteJidAlt].find(
-          (j) => typeof j === 'string' && j.endsWith('@lid')
-        ) ?? null;
+      : this.findLid(key.participant, key.participantAlt, key.remoteJid, key.remoteJidAlt);
 
     return { chatJid, senderJid, senderLid, fromBot };
+  }
+
+  /**
+   * Resolve admin permissions for both sender and bot within group chats.
+   */
+  private static resolvePermissions(
+    adminMap: Map<string, boolean>,
+    isGroup: boolean,
+    senderJid: string,
+    senderLid: string | null,
+    sock: WASocket
+  ): { isAdmin: boolean; isBotAdmin: boolean } {
+    if (!isGroup) {
+      return { isAdmin: false, isBotAdmin: false };
+    }
+
+    const botJid = jidNormalizedUser(sock.user?.id ?? '');
+    const botLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : null;
+
+    return {
+      isAdmin: this.resolveIsAdmin(adminMap, senderJid, senderLid),
+      isBotAdmin: this.resolveIsAdmin(adminMap, botJid, botLid),
+    };
   }
 
   /**
@@ -445,5 +503,37 @@ export class SerializeService {
       }
     }
     return false;
+  }
+
+  /**
+   * Parse command name, prefix, arguments, and text payload from unwrapped message.
+   */
+  private static parseCommand(rawMsg: proto.IMessage | null | undefined): {
+    body: string;
+    prefix: string;
+    command: string;
+    args: string[];
+    text: string;
+    query: string;
+  } {
+    const body = this.extractBodyFromUnwrapped(rawMsg);
+    const afterPrefix = body.startsWith(config.bot.prefix) ? body.slice(config.bot.prefix.length) : '';
+    const hasPrefix = Boolean(afterPrefix && !afterPrefix.startsWith(' '));
+
+    const cleanBody = hasPrefix ? afterPrefix.trim() : body.trim();
+    const parts = cleanBody ? cleanBody.split(/\s+/) : [];
+    const command = hasPrefix ? (parts[0] ?? '').toLowerCase() : '';
+    const args = hasPrefix ? parts.slice(1) : parts;
+    const text = args.join(' ');
+    const query = text.trim();
+
+    return {
+      body,
+      prefix: hasPrefix ? config.bot.prefix : '',
+      command,
+      args,
+      text,
+      query,
+    };
   }
 }
