@@ -375,9 +375,16 @@ export class SerializeService {
     const { mimetype, fileName } = this.extractMediaMeta(quotedMsg);
     const text = this.extractBodyFromUnwrapped(quotedMsg);
 
+    const botJid = jidNormalizedUser(sock.user?.id ?? '');
+    const botLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : null;
+    const isFromBot = Boolean(
+      (botJid && areJidsSameUser(senderJid, botJid)) ||
+      (botLid && senderLid && areJidsSameUser(senderLid, botLid))
+    );
+
     const quotedKey: proto.IMessageKey = {
       remoteJid: message.key.remoteJid!,
-      fromMe: Boolean(senderJid && areJidsSameUser(senderJid, message.key.participant ?? '')),
+      fromMe: Boolean(ctx.participant ? isFromBot : (message.key.fromMe ?? false)),
       id: ctx.stanzaId,
       participant: ctx.participant,
     };

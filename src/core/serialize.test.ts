@@ -282,12 +282,30 @@ describe('core/serialize', () => {
       expect(m?.quoted?.text).toBe('pesan yang dibalas');
       expect(m?.quoted?.senderJid).toBe('628111111111@s.whatsapp.net');
       expect(m?.quoted?.key.id).toBe('QUOTED_ID_999');
+      expect(m?.quoted?.key.fromMe).toBe(false);
 
       await m?.quoted?.react('👍');
       expect(sentReact).toBe(true);
 
       await m?.quoted?.delete();
       expect(sentDelete).toBe(true);
+
+      // Quoted message sent by bot itself -> fromMe is true
+      const botQuotedMsg: WAMessage = {
+        key: { remoteJid: '120363000000000000@g.us', id: 'MSG_MAIN_2', participant: '628222222222@s.whatsapp.net', fromMe: false },
+        message: {
+          extendedTextMessage: {
+            text: '.ping',
+            contextInfo: {
+              stanzaId: 'BOT_QUOTED_ID',
+              participant: '6289999999999:0@s.whatsapp.net',
+              quotedMessage: { conversation: 'bot message' },
+            },
+          },
+        },
+      };
+      const botParsed = await SerializeService.parse(botQuotedMsg, mockSock);
+      expect(botParsed?.quoted?.key.fromMe).toBe(true);
     });
 
     test('resolves group admins and bot admin flags via adminMap', async () => {
