@@ -1,9 +1,11 @@
 import {
   BufferJSON,
+  jidNormalizedUser,
   type WAMessage,
   type WAMessageKey,
   type GroupMetadata,
 } from '@whiskeysockets/baileys';
+import { isBoom } from '@hapi/boom';
 
 import { RedisService } from '@/infra/redis';
 
@@ -15,7 +17,7 @@ const MESSAGE_TTL_SECONDS = 48 * 60 * 60; // 48 hours message TTL for retries & 
 const GROUP_TTL_SECONDS = 24 * 60 * 60;   // 24 hours group metadata TTL
 
 const msgKey = (chatJid: string, messageId: string): string =>
-  `${config.redis.prefix}store:msg:${chatJid}:${messageId}`;
+  `${config.redis.prefix}store:msg:${jidNormalizedUser(chatJid)}:${messageId}`;
 
 const groupKey = (groupJid: string): string =>
   `${config.redis.prefix}store:group:${groupJid}`;
@@ -32,6 +34,7 @@ export class MessageStoreService {
     try {
       const key = msgKey(chatJid, messageId);
       const json = JSON.stringify(message, BufferJSON.replacer);
+
       await RedisService.set(key, json, MESSAGE_TTL_SECONDS);
       logger.debug({ chatJid, messageId }, '[MessageStoreService] Saved message to Redis');
     } catch (err) {
@@ -49,11 +52,13 @@ export class MessageStoreService {
 
     try {
       const redisKey = msgKey(chatJid, messageId);
+
       const raw = await RedisService.get(redisKey);
       if (!raw) return undefined;
 
       const message = JSON.parse(raw, BufferJSON.reviver) as WAMessage;
       logger.debug({ chatJid, messageId }, '[MessageStoreService] Retrieved message from Redis');
+
       return message;
     } catch (err) {
       logger.error({ err, chatJid, messageId }, '[MessageStoreService] Failed to load message from Redis');
@@ -71,10 +76,22 @@ export class MessageStoreService {
     try {
       const metadata = await sock.groupMetadata(groupJid);
       const key = groupKey(groupJid);
+
       await RedisService.set(key, JSON.stringify(metadata), GROUP_TTL_SECONDS);
       logger.debug({ jid: groupJid }, '[MessageStoreService] Group metadata cached in Redis');
+
       return metadata;
-    } catch (err) {
+    } catch (err: unknown) {
+      // 403 Forbidden means bot is not/no longer a participant (e.g. kicked, left, or pending approval)
+      const isForbidden =
+        (isBoom(err) && (err.output?.statusCode === 403 || err.data === 403)) ||
+        (err instanceof Error && err.message === 'forbidden');
+
+      if (isForbidden) {
+        await this.evictGroupCache(groupJid);
+        return undefined;
+      }
+
       logger.error({ err, jid: groupJid }, '[MessageStoreService] Failed to fetch group metadata');
       return undefined;
     }
@@ -85,7 +102,7 @@ export class MessageStoreService {
    */
   static async evictGroupCache(groupJid: string): Promise<void> {
     await RedisService.del(groupKey(groupJid));
-    logger.info({ jid: groupJid }, '[MessageStoreService] Group cache evicted from Redis (bot removed from group)');
+    logger.debug({ jid: groupJid }, '[MessageStoreService] Group cache evicted from Redis');
   }
 
   /**
@@ -94,8 +111,10 @@ export class MessageStoreService {
   static async getCachedGroupMetadata(groupJid: string): Promise<GroupMetadata | undefined> {
     try {
       const key = groupKey(groupJid);
+
       const raw = await RedisService.get(key);
       if (!raw) return undefined;
+
       return JSON.parse(raw) as GroupMetadata;
     } catch (err) {
       logger.error({ err, jid: groupJid }, '[MessageStoreService] Failed to get cached group metadata from Redis');
